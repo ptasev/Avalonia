@@ -710,6 +710,7 @@ namespace Avalonia.Controls.UnitTests
         [Fact]
         public void Handles_Resetting_Items_With_Existing_Selection_And_AutoScrollToSelectedItem()
         {
+            var selectionChangedCalled = false;
             var items = new ResettingCollection(100);
             var target = new ListBox
             {
@@ -728,19 +729,96 @@ namespace Avalonia.Controls.UnitTests
                 .ToList();
 
             Assert.Equal(Enumerable.Range(0, 10).Select(x => $"Item{x}"), realized);
+            Assert.Equal(1, target.SelectedIndex);
+            Assert.Equal("Item1", target.SelectedItem);
 
-            items.Reverse();
-            Layout(target);
+            target.SelectionChanged += SelectionChangedHandler;
+            try
+            {
+                items.Reverse();
+                Layout(target);
 
-            Threading.Dispatcher.UIThread.RunJobs(null, TestContext.Current.CancellationToken);
+                Threading.Dispatcher.UIThread.RunJobs(null, TestContext.Current.CancellationToken);
 
-            realized = target.GetRealizedContainers()
+                realized = target.GetRealizedContainers()
+                    .Cast<ListBoxItem>()
+                    .Select(x => (string?)x.DataContext)
+                    .ToList();
+
+                // "Item1" should remain selected, and now be at the bottom of the viewport.
+                Assert.Equal(Enumerable.Range(0, 10).Select(x => $"Item{10 - x}"), realized);
+                Assert.Equal(items.Count - 2, target.SelectedIndex);
+                Assert.Equal("Item1", target.SelectedItem);
+                Assert.False(selectionChangedCalled);
+            }
+            finally
+            {
+                target.SelectionChanged -= SelectionChangedHandler;
+            }
+
+            return;
+            void SelectionChangedHandler(object? sender, SelectionChangedEventArgs e)
+            {
+                selectionChangedCalled = true;
+            }
+        }
+
+        [Fact]
+        public void Handles_Resetting_Items_By_Clearing_With_Existing_Selection()
+        {
+            var selectionChangedCalled = false;
+            var items = new ResettingCollection(100);
+            var target = new ListBox
+            {
+                Template = ListBoxTemplate(),
+                ItemsSource = items,
+                ItemTemplate = new FuncDataTemplate<string>((_, __) => new Canvas { Height = 10 }),
+                AutoScrollToSelectedItem = true,
+                SelectedIndex = 1,
+            };
+            
+            Prepare(target);
+
+            var realized = target.GetRealizedContainers()
                 .Cast<ListBoxItem>()
                 .Select(x => (string?)x.DataContext)
                 .ToList();
 
-            // "Item1" should remain selected, and now be at the bottom of the viewport.
-            Assert.Equal(Enumerable.Range(0, 10).Select(x => $"Item{10 - x}"), realized);
+            Assert.Equal(Enumerable.Range(0, 10).Select(x => $"Item{x}"), realized);
+            Assert.Equal(1, target.SelectedIndex);
+            Assert.Equal("Item1", target.SelectedItem);
+
+            target.SelectionChanged += SelectionChangedHandler;
+            try
+            {
+                items.Clear();
+                Layout(target);
+
+                Threading.Dispatcher.UIThread.RunJobs(null, TestContext.Current.CancellationToken);
+
+                realized = target.GetRealizedContainers()
+                    .Cast<ListBoxItem>()
+                    .Select(x => (string?)x.DataContext)
+                    .ToList();
+
+                // There should be no selected item
+                Assert.Empty(realized);
+                Assert.Equal(-1, target.SelectedIndex);
+                Assert.Equal(null, target.SelectedItem);
+                Assert.True(selectionChangedCalled);
+            }
+            finally
+            {
+                target.SelectionChanged -= SelectionChangedHandler;
+            }
+
+            return;
+            void SelectionChangedHandler(object? sender, SelectionChangedEventArgs e)
+            {
+                selectionChangedCalled = true;
+                Assert.Equal(0, e.AddedItems.Count);
+                Assert.Equal(1, e.RemovedItems.Count);
+            }
         }
 
         [Fact]
@@ -1338,6 +1416,14 @@ namespace Avalonia.Controls.UnitTests
             public new void Reverse()
             {
                 base.Reverse();
+                CollectionChanged?.Invoke(
+                    this,
+                    new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+            }
+
+            public new void Clear()
+            {
+                base.Clear();
                 CollectionChanged?.Invoke(
                     this,
                     new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
